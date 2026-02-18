@@ -266,7 +266,7 @@ async def analyze_sentiment_with_background_moderation(
     
     try:
         # Smart sampling decision
-        sampling_rate = 0.1  # 10% of normal messages
+        sampling_rate = 1.0  # Process all messages with AI
         must_process = False
         if player_id is not None and supabase:
             try:
