@@ -7,6 +7,8 @@ import asyncio
 import os
 from dotenv import load_dotenv
 
+from services.token_tracker import token_tracker
+
 from .state import (
     SentimentAnalysisState,
     CommunityIntent,
@@ -172,6 +174,14 @@ class AnalyzeCommunityIntent(BaseNode[SentimentAnalysisState]):
             result = await CommunityIntentAgent.run(
                 ctx.state.chat_analysis.chat.content
             )
+            usage = result.usage()
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                f"CommunityIntentAgent usage raw: {usage} | "
+                f"input={usage.input_tokens} output={usage.output_tokens} "
+                f"requests={usage.requests} details={getattr(usage, 'details', {})}"
+            )
+            token_tracker.track("CommunityIntentAgent", usage.input_tokens, usage.output_tokens)
             intent_result = result.output if hasattr(result, "output") else result
 
             # Ensure reason is None when intent is None
@@ -181,7 +191,9 @@ class AnalyzeCommunityIntent(BaseNode[SentimentAnalysisState]):
             ctx.state.chat_analysis.community_intent = intent_result
 
         except Exception as e:
-            print(f"Community intent error: {e}")
+            import logging
+            logging.getLogger(__name__).error(f"CommunityIntentAgent FAILED: {e}", exc_info=True)
+            token_tracker.track(f"CommunityIntentAgent_ERROR: {e}", 0, 0)
             ctx.state.chat_analysis.community_intent = CommunityIntent(
                 intent=None, reason=None
             )

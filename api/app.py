@@ -18,6 +18,7 @@ import asyncio
 import time
 import threading
 from collections import defaultdict
+from services.token_tracker import token_tracker
 
 # Helper function to clean AI service response
 def clean_ai_response(response):
@@ -121,6 +122,7 @@ class SentimentResponse(BaseModel):
     moderation_action: Optional[str] = None
     moderation_reason: Optional[str] = None
     error: Optional[str] = None
+    token_usage: Optional[Dict[str, Any]] = None
 
 # Full response for frontend - includes moderation data
 class AnalyzeResponse(BaseModel):
@@ -324,6 +326,7 @@ async def analyze_sentiment_with_background_moderation(
         )
 
         # Run sentiment analysis with moderation
+        token_snap = token_tracker.snapshot()
         try:
             sentiment_result = await ai_service.analyze_message_with_moderation(
                 user_message, message_id, player_id, player_name
@@ -334,6 +337,7 @@ async def analyze_sentiment_with_background_moderation(
         except Exception as e:
             logger.error(f"Error in AI analysis: {e}")
             cleaned_result = {"sentiment_score": 0, "error": str(e)}
+        request_tokens = token_tracker.diff(token_snap)
         
         # Store player data
         player_data = {
@@ -433,7 +437,8 @@ async def analyze_sentiment_with_background_moderation(
                 sentiment_score=sentiment_score,
                 moderation_action=moderation_action,
                 moderation_reason=moderation_reason,
-                error=error_msg
+                error=error_msg,
+                token_usage=request_tokens
             )
             
             logger.info(f"Returning sentiment result with moderation: {result}")
@@ -1246,4 +1251,15 @@ async def debug_database_data():
     except Exception as e:
         logger.error(f"Debug data error: {e}")
         return {"error": str(e)}
+
+@app.get("/api/token-usage")
+async def get_token_usage():
+    """Get accumulated Gemini API token usage and estimated costs"""
+    return token_tracker.get_stats()
+
+@app.post("/api/token-usage/reset")
+async def reset_token_usage(_: None = Depends(verify_api_key)):
+    """Reset token usage counters (requires API key)"""
+    token_tracker.reset()
+    return {"message": "Token usage counters reset"}
 

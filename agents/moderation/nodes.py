@@ -9,6 +9,8 @@ import logging
 from dotenv import load_dotenv
 import re
 
+from services.token_tracker import token_tracker
+
 from .state import (
     ModerationState,
     PIIResult,
@@ -217,10 +219,13 @@ class StartModeration:
         """Check if the user intends to share personal information using AI"""
         try:
             result = await PIIAgent.run(content)
+            usage = result.usage()
+            token_tracker.track("PIIAgent", usage.input_tokens, usage.output_tokens)
             intent = result.output if hasattr(result, "output") else result
             return intent
         except Exception as e:
-            logger.error(f"Error in PII intent detection: {e}")
+            logger.error(f"PIIAgent FAILED: {e}", exc_info=True)
+            token_tracker.track("PIIAgent_ERROR", 0, 0)
             return False
     
     async def _check_content(self, content: str) -> ContentResult:
@@ -271,6 +276,8 @@ class StartModeration:
             if state.content_result and state.content_result.main_category != ContentType.OK:
                 prompt = f"Content type: {state.content_result.main_category.value}, Message: {state.message.content}"
                 result = await ModAgent.run(prompt)
+                usage = result.usage()
+                token_tracker.track("ModAgent", usage.input_tokens, usage.output_tokens)
                 action = result.output if hasattr(result, "output") else result
                 return action
             
@@ -278,7 +285,8 @@ class StartModeration:
             return None
             
         except Exception as e:
-            logger.error(f"Error in AI action determination: {e}")
+            logger.error(f"ModAgent FAILED: {e}", exc_info=True)
+            token_tracker.track("ModAgent_ERROR", 0, 0)
             # Fallback to warning on error
             return ModAction(
                 action=ActionType.WARNING,
@@ -360,6 +368,8 @@ class CheckIntent(BaseNode[ModerationState]):
     async def run(self, ctx: GraphRunContext) -> Union[ModerateContent, End]:
         try:
             result = await PIIAgent.run(ctx.state.message.content)
+            usage = result.usage()
+            token_tracker.track("PIIAgent", usage.input_tokens, usage.output_tokens)
             intent = result.output if hasattr(result, "output") else result
 
             if ctx.state.pii_result:
@@ -421,6 +431,8 @@ class DetermineAction(BaseNode[ModerationState]):
         try:
             prompt = f"Content type: {ctx.state.content_result.main_category.value}, Message: {ctx.state.message.content}"
             result = await ModAgent.run(prompt)
+            usage = result.usage()
+            token_tracker.track("ModAgent", usage.input_tokens, usage.output_tokens)
             action = result.output if hasattr(result, "output") else result
             ctx.state.recommended_action = action
             return End(f"Action determined: {action.action.value}")
