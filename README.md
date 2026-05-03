@@ -6,7 +6,7 @@ FastAPI service that analyzes and moderates chat from the Bloom Roblox game.
 
 ```powershell
 pip install -r requirements.txt
-uvicorn api.app:app --reload --port 8000
+python -m uvicorn api.app:app --reload --port 8000
 ```
 
 Then open <http://localhost:8000/health>.
