@@ -6,7 +6,6 @@ import requests
 import asyncio
 import os
 import logging
-from dotenv import load_dotenv
 import re
 
 from services.token_tracker import token_tracker
@@ -21,7 +20,6 @@ from .state import (
     ActionType,
 )
 
-load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 logger = logging.getLogger(__name__)
 

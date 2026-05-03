@@ -1,11 +1,18 @@
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env BEFORE importing anything that constructs pydantic-ai Agents at
+# module level (services.chat_service -> agents.moderation.nodes), since those
+# read GOOGLE_API_KEY from os.environ at import time.
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
+
 from fastapi import FastAPI, HTTPException, Request, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
 import os
-from pathlib import Path
-import google.generativeai as genai
+from google import genai
 import random
 import json
 import re
@@ -13,7 +20,6 @@ from supabase import create_client, Client
 from datetime import datetime, timezone
 import requests
 import logging
-from dotenv import load_dotenv
 import asyncio
 import time
 import threading
@@ -48,9 +54,6 @@ from services.ai_service import ai_service
 # Import the Roblox service
 from services.roblox_service import roblox_service
 
-env_path = Path(__file__).parent.parent / '.env'
-load_dotenv(dotenv_path=env_path)
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -84,11 +87,9 @@ BLOOM_API_KEY = os.environ.get("BLOOM_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
-# Initialize APIs
-genai.configure(api_key=GOOGLE_API_KEY)
-
-# Initialize Gemini model
-model = genai.GenerativeModel('gemini-1.5-flash')
+# Initialize Gemini client (used by /health to smoke-test the API key).
+# Real LLM traffic goes through pydantic-ai agents in agents/{moderation,sentiment}.
+genai_client = genai.Client(api_key=GOOGLE_API_KEY) if GOOGLE_API_KEY else None
 
 # Initialize Supabase client
 if SUPABASE_URL and SUPABASE_KEY:
@@ -103,7 +104,7 @@ logger.info("Server starting up with configuration...")
 logger.info(f"Google API Key configured: {'Yes' if GOOGLE_API_KEY else 'No'}")
 logger.info(f"Roblox API Key configured: {'Yes' if BLOOM_API_KEY else 'No'}")
 logger.info(f"Supabase configured: {'Yes' if SUPABASE_URL and SUPABASE_KEY else 'No'}")
-logger.info("Gemini model initialized")
+logger.info(f"Gemini client initialized: {'Yes' if genai_client else 'No'}")
 
 # Pydantic models for request/response
 class AnalyzeRequest(BaseModel):
@@ -763,11 +764,12 @@ def check_supabase_connection() -> ServiceStatus:
 def check_ai_model() -> ServiceStatus:
     """Check if Gemini AI model is working"""
     try:
-        if not GOOGLE_API_KEY:
+        if not genai_client:
             return ServiceStatus(status="not_configured")
-        
-        # Try a simple generation
-        response = model.generate_content("test")
+
+        response = genai_client.models.generate_content(
+            model="gemini-1.5-flash", contents="test"
+        )
         if response:
             return ServiceStatus(status="healthy")
         return ServiceStatus(status="unhealthy")

@@ -5,7 +5,6 @@ from typing import Union
 import requests
 import asyncio
 import os
-from dotenv import load_dotenv
 
 from services.token_tracker import token_tracker
 
@@ -16,7 +15,6 @@ from .state import (
     CommunityAction,
 )
 
-load_dotenv()
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # ---------- Configuration Constants ----------
