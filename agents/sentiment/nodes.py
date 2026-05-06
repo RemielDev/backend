@@ -2,11 +2,15 @@ from dataclasses import dataclass
 from pydantic_ai import Agent
 from pydantic_graph import BaseNode, GraphRunContext, End
 from typing import Union
-import requests
 import asyncio
+import logging
 import os
 
+from services.hf_client import hf_session, warn_if_token_missing
 from services.token_tracker import token_tracker
+
+logger = logging.getLogger(__name__)
+warn_if_token_missing(logger)
 
 from .state import (
     SentimentAnalysisState,
@@ -65,7 +69,7 @@ async def analyze_sentiment(text: str):
 
     def sync_query():
         try:
-            response = requests.post(
+            response = hf_session.post(
                 SENTIMENT_API_URL,
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={"inputs": text},
