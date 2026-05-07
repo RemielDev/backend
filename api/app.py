@@ -24,6 +24,7 @@ import asyncio
 import time
 import threading
 from collections import defaultdict
+from services.db_retry import with_retries
 from services.token_tracker import token_tracker
 
 # Helper function to clean AI service response
@@ -274,7 +275,10 @@ async def analyze_sentiment_with_background_moderation(
         if player_id is not None and supabase:
             try:
                 # Treat players with any prior moderation action as high-risk -> always analyze
-                prior = supabase.table('moderation_actions').select('id').eq('player_id', player_id).limit(1).execute()
+                prior = await with_retries(
+                    "moderation_actions prior check",
+                    lambda: supabase.table('moderation_actions').select('id').eq('player_id', player_id).limit(1).execute(),
+                )
                 must_process = bool(prior.data)
             except Exception as _e:
                 must_process = False
@@ -292,7 +296,10 @@ async def analyze_sentiment_with_background_moderation(
                         "player_name": player_name,
                         "last_seen": current_time.isoformat()
                     }
-                    supabase.table('players').upsert(player_data).execute()
+                    await with_retries(
+                        "players upsert (sampled)",
+                        lambda: supabase.table('players').upsert(player_data).execute(),
+                    )
 
                     message_data = {
                         "message_id": message_id,
@@ -301,7 +308,10 @@ async def analyze_sentiment_with_background_moderation(
                         "sentiment_score": 0,
                         "created_at": current_time.isoformat()
                     }
-                    supabase.table('messages').insert(message_data).execute()
+                    await with_retries(
+                        "messages insert (sampled)",
+                        lambda: supabase.table('messages').insert(message_data).execute(),
+                    )
             except Exception as e:
                 logger.error(f"Failed to store sampled message {message_id}: {e}")
 
@@ -348,9 +358,12 @@ async def analyze_sentiment_with_background_moderation(
         }
         
         # Upsert player data
-        supabase.table('players').upsert(player_data).execute()
+        await with_retries(
+            "players upsert",
+            lambda: supabase.table('players').upsert(player_data).execute(),
+        )
         logger.info("Player data stored/updated in Supabase")
-        
+
         # Store message data
         message_data = {
             "message_id": message_id,
@@ -359,35 +372,44 @@ async def analyze_sentiment_with_background_moderation(
             "sentiment_score": cleaned_result.get("sentiment_score", 0),
             "created_at": current_time.isoformat()
         }
-        
-        supabase.table('messages').insert(message_data).execute()
+
+        await with_retries(
+            "messages insert",
+            lambda: supabase.table('messages').insert(message_data).execute(),
+        )
         logger.info("Message data stored in Supabase")
-        
+
         # Update player's total sentiment score
         try:
             # Get current total sentiment score
-            player_result = supabase.table('players').select('total_sentiment_score').eq('player_id', player_id).execute()
+            player_result = await with_retries(
+                "players select total_sentiment_score",
+                lambda: supabase.table('players').select('total_sentiment_score').eq('player_id', player_id).execute(),
+            )
             current_total = player_result.data[0].get('total_sentiment_score', 0) if player_result.data else 0
-            
+
             # Add new sentiment score
             new_total = current_total + cleaned_result.get("sentiment_score", 0)
-            
+
             # Update the total
-            supabase.table('players').update({"total_sentiment_score": new_total}).eq('player_id', player_id).execute()
+            await with_retries(
+                "players update total_sentiment_score",
+                lambda: supabase.table('players').update({"total_sentiment_score": new_total}).eq('player_id', player_id).execute(),
+            )
             logger.info(f"Updated total sentiment score for player {player_id}: {new_total}")
         except Exception as e:
             logger.error(f"Error updating total sentiment score: {e}")
-        
+
         # Extract moderation action and reason for immediate response
         moderation_action = cleaned_result.get("moderation_action")
         moderation_reason = cleaned_result.get("moderation_reason")
-        
+
         # Log moderation action for debugging
         if moderation_action:
             logger.info(f"Immediate moderation action for player {player_id}: {moderation_action} - {moderation_reason}")
         else:
             logger.info(f"No moderation action for player {player_id}")
-        
+
         # Record moderation action in database if present
         if moderation_action:
             try:
@@ -400,23 +422,29 @@ async def analyze_sentiment_with_background_moderation(
                     "success": True,  # Action was determined by AI
                     "error": None
                 }
-                supabase.table('moderation_actions').insert(moderation_record).execute()
+                await with_retries(
+                    "moderation_actions insert",
+                    lambda: supabase.table('moderation_actions').insert(moderation_record).execute(),
+                )
                 logger.info(f"Moderation action '{moderation_action}' logged to moderation_actions table.")
-                
+
                 # Update message with moderation info
                 update_data = {
                     "moderation_action": moderation_action,
                     "moderation_reason": moderation_reason,
                     "flag": moderation_action.lower() == "ban"  # Flag bans for human review
                 }
-                supabase.table('messages').update(update_data).eq('message_id', message_id).execute()
+                await with_retries(
+                    "messages update moderation",
+                    lambda: supabase.table('messages').update(update_data).eq('message_id', message_id).execute(),
+                )
                 logger.info(f"Message {message_id} updated with moderation action.")
-                
+
             except Exception as db_error:
                 logger.error(f"Failed to record moderation action in database: {db_error}")
-        
+
         logger.info(f"Full cleaned result: {cleaned_result}")
-        
+
         # Return sentiment result with moderation action immediately
         try:
             # Ensure all values are serializable
@@ -1128,9 +1156,12 @@ async def analyze_with_immediate_moderation(
         }
         
         # Upsert player data
-        supabase.table('players').upsert(player_data).execute()
+        await with_retries(
+            "players upsert (immediate-mod)",
+            lambda: supabase.table('players').upsert(player_data).execute(),
+        )
         logger.info("Player data stored/updated in Supabase")
-        
+
         # Store message data
         message_data = {
             "message_id": message_id,
@@ -1139,48 +1170,57 @@ async def analyze_with_immediate_moderation(
             "sentiment_score": cleaned_result.get("sentiment_score", 0),
             "created_at": current_time.isoformat()
         }
-        
-        supabase.table('messages').insert(message_data).execute()
+
+        await with_retries(
+            "messages insert (immediate-mod)",
+            lambda: supabase.table('messages').insert(message_data).execute(),
+        )
         logger.info("Message data stored in Supabase")
-        
+
         # Update player's total sentiment score
         try:
             # Get current total sentiment score
-            player_result = supabase.table('players').select('total_sentiment_score').eq('player_id', player_id).execute()
+            player_result = await with_retries(
+                "players select total_sentiment_score (immediate-mod)",
+                lambda: supabase.table('players').select('total_sentiment_score').eq('player_id', player_id).execute(),
+            )
             current_total = player_result.data[0].get('total_sentiment_score', 0) if player_result.data else 0
-            
+
             # Add new sentiment score
             new_total = current_total + cleaned_result.get("sentiment_score", 0)
-            
+
             # Update the total
-            supabase.table('players').update({"total_sentiment_score": new_total}).eq('player_id', player_id).execute()
+            await with_retries(
+                "players update total_sentiment_score (immediate-mod)",
+                lambda: supabase.table('players').update({"total_sentiment_score": new_total}).eq('player_id', player_id).execute(),
+            )
             logger.info(f"Updated total sentiment score for player {player_id}: {new_total}")
         except Exception as e:
             logger.error(f"Error updating total sentiment score: {e}")
-        
+
         # Check for moderation action
         moderation_action = cleaned_result.get("moderation_action")
         moderation_reason = cleaned_result.get("moderation_reason")
-        
+
         # Determine if this should be an immediate action or flagged for review
         immediate_action = None
         should_flag = False
-        
+
         if moderation_action:
             action_lower = moderation_action.lower()
-            
+
             # AI AUTO-ACTIONS: Warnings and kicks can be applied immediately
             if action_lower in ["warning", "kick"]:
                 immediate_action = moderation_action
                 should_flag = False
                 logger.info(f"AI recommends immediate {action_lower} action for player {player_id}")
-                
+
             # HUMAN REVIEW: Bans are flagged for human review
             elif action_lower == "ban":
                 immediate_action = None  # Don't apply immediately
                 should_flag = True
                 logger.info(f"AI recommends BAN for player {player_id} - flagged for human review")
-        
+
         # Log moderation action to database
         if moderation_action:
             moderation_record = {
@@ -1192,16 +1232,22 @@ async def analyze_with_immediate_moderation(
                 "success": immediate_action is not None,  # True if immediate, False if pending review
                 "error": "Pending human review" if should_flag else None
             }
-            supabase.table('moderation_actions').insert(moderation_record).execute()
+            await with_retries(
+                "moderation_actions insert (immediate-mod)",
+                lambda: supabase.table('moderation_actions').insert(moderation_record).execute(),
+            )
             logger.info(f"Moderation action '{moderation_action}' logged to database.")
-            
+
             # Update message with moderation info
             update_data = {
                 "moderation_action": moderation_action,
                 "moderation_reason": moderation_reason,
                 "flag": should_flag
             }
-            supabase.table('messages').update(update_data).eq('message_id', message_id).execute()
+            await with_retries(
+                "messages update moderation (immediate-mod)",
+                lambda: supabase.table('messages').update(update_data).eq('message_id', message_id).execute(),
+            )
         
         # Return comprehensive result
         result = {
