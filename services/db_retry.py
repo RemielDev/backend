@@ -35,7 +35,7 @@ def _is_transient(exc: BaseException) -> bool:
 async def with_retries(
     label: str,
     fn: Callable[[], T],
-    retries: int = 4,
+    retries: int = 0,
     backoff: float = 0.5,
 ) -> T:
     """Run `fn` in the default executor; retry transient failures with exponential backoff."""
@@ -59,7 +59,7 @@ async def with_retries(
 async def try_with_retries(
     label: str,
     fn: Callable[[], T],
-    retries: int = 4,
+    retries: int = 0,
     backoff: float = 0.5,
 ) -> Optional[T]:
     """Like `with_retries` but logs and returns None on terminal failure instead of raising.
