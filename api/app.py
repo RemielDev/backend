@@ -24,7 +24,7 @@ import asyncio
 import time
 import threading
 from collections import defaultdict
-from services.db_retry import with_retries
+from services.db_retry import try_with_retries
 from services.token_tracker import token_tracker
 
 # Helper function to clean AI service response
@@ -275,11 +275,11 @@ async def analyze_sentiment_with_background_moderation(
         if player_id is not None and supabase:
             try:
                 # Treat players with any prior moderation action as high-risk -> always analyze
-                prior = await with_retries(
+                prior = await try_with_retries(
                     "moderation_actions prior check",
                     lambda: supabase.table('moderation_actions').select('id').eq('player_id', player_id).limit(1).execute(),
                 )
-                must_process = bool(prior.data)
+                must_process = bool(prior and prior.data)
             except Exception as _e:
                 must_process = False
 
@@ -296,7 +296,7 @@ async def analyze_sentiment_with_background_moderation(
                         "player_name": player_name,
                         "last_seen": current_time.isoformat()
                     }
-                    await with_retries(
+                    await try_with_retries(
                         "players upsert (sampled)",
                         lambda: supabase.table('players').upsert(player_data).execute(),
                     )
@@ -308,7 +308,7 @@ async def analyze_sentiment_with_background_moderation(
                         "sentiment_score": 0,
                         "created_at": current_time.isoformat()
                     }
-                    await with_retries(
+                    await try_with_retries(
                         "messages insert (sampled)",
                         lambda: supabase.table('messages').insert(message_data).execute(),
                     )
@@ -358,7 +358,7 @@ async def analyze_sentiment_with_background_moderation(
         }
         
         # Upsert player data
-        await with_retries(
+        await try_with_retries(
             "players upsert",
             lambda: supabase.table('players').upsert(player_data).execute(),
         )
@@ -373,7 +373,7 @@ async def analyze_sentiment_with_background_moderation(
             "created_at": current_time.isoformat()
         }
 
-        await with_retries(
+        await try_with_retries(
             "messages insert",
             lambda: supabase.table('messages').insert(message_data).execute(),
         )
@@ -382,17 +382,17 @@ async def analyze_sentiment_with_background_moderation(
         # Update player's total sentiment score
         try:
             # Get current total sentiment score
-            player_result = await with_retries(
+            player_result = await try_with_retries(
                 "players select total_sentiment_score",
                 lambda: supabase.table('players').select('total_sentiment_score').eq('player_id', player_id).execute(),
             )
-            current_total = player_result.data[0].get('total_sentiment_score', 0) if player_result.data else 0
+            current_total = player_result.data[0].get('total_sentiment_score', 0) if player_result and player_result.data else 0
 
             # Add new sentiment score
             new_total = current_total + cleaned_result.get("sentiment_score", 0)
 
             # Update the total
-            await with_retries(
+            await try_with_retries(
                 "players update total_sentiment_score",
                 lambda: supabase.table('players').update({"total_sentiment_score": new_total}).eq('player_id', player_id).execute(),
             )
@@ -422,7 +422,7 @@ async def analyze_sentiment_with_background_moderation(
                     "success": True,  # Action was determined by AI
                     "error": None
                 }
-                await with_retries(
+                await try_with_retries(
                     "moderation_actions insert",
                     lambda: supabase.table('moderation_actions').insert(moderation_record).execute(),
                 )
@@ -434,7 +434,7 @@ async def analyze_sentiment_with_background_moderation(
                     "moderation_reason": moderation_reason,
                     "flag": moderation_action.lower() == "ban"  # Flag bans for human review
                 }
-                await with_retries(
+                await try_with_retries(
                     "messages update moderation",
                     lambda: supabase.table('messages').update(update_data).eq('message_id', message_id).execute(),
                 )
@@ -1156,7 +1156,7 @@ async def analyze_with_immediate_moderation(
         }
         
         # Upsert player data
-        await with_retries(
+        await try_with_retries(
             "players upsert (immediate-mod)",
             lambda: supabase.table('players').upsert(player_data).execute(),
         )
@@ -1171,7 +1171,7 @@ async def analyze_with_immediate_moderation(
             "created_at": current_time.isoformat()
         }
 
-        await with_retries(
+        await try_with_retries(
             "messages insert (immediate-mod)",
             lambda: supabase.table('messages').insert(message_data).execute(),
         )
@@ -1180,17 +1180,17 @@ async def analyze_with_immediate_moderation(
         # Update player's total sentiment score
         try:
             # Get current total sentiment score
-            player_result = await with_retries(
+            player_result = await try_with_retries(
                 "players select total_sentiment_score (immediate-mod)",
                 lambda: supabase.table('players').select('total_sentiment_score').eq('player_id', player_id).execute(),
             )
-            current_total = player_result.data[0].get('total_sentiment_score', 0) if player_result.data else 0
+            current_total = player_result.data[0].get('total_sentiment_score', 0) if player_result and player_result.data else 0
 
             # Add new sentiment score
             new_total = current_total + cleaned_result.get("sentiment_score", 0)
 
             # Update the total
-            await with_retries(
+            await try_with_retries(
                 "players update total_sentiment_score (immediate-mod)",
                 lambda: supabase.table('players').update({"total_sentiment_score": new_total}).eq('player_id', player_id).execute(),
             )
@@ -1232,7 +1232,7 @@ async def analyze_with_immediate_moderation(
                 "success": immediate_action is not None,  # True if immediate, False if pending review
                 "error": "Pending human review" if should_flag else None
             }
-            await with_retries(
+            await try_with_retries(
                 "moderation_actions insert (immediate-mod)",
                 lambda: supabase.table('moderation_actions').insert(moderation_record).execute(),
             )
@@ -1244,7 +1244,7 @@ async def analyze_with_immediate_moderation(
                 "moderation_reason": moderation_reason,
                 "flag": should_flag
             }
-            await with_retries(
+            await try_with_retries(
                 "messages update moderation (immediate-mod)",
                 lambda: supabase.table('messages').update(update_data).eq('message_id', message_id).execute(),
             )

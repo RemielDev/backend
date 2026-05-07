@@ -8,7 +8,7 @@ block the event loop any more than the underlying sync client already does.
 """
 import asyncio
 import logging
-from typing import Awaitable, Callable, TypeVar
+from typing import Awaitable, Callable, Optional, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -54,3 +54,21 @@ async def with_retries(
             await asyncio.sleep(sleep_for)
     # unreachable — loop either returns or raises
     raise RuntimeError(f"{label}: retry loop exited unexpectedly")
+
+
+async def try_with_retries(
+    label: str,
+    fn: Callable[[], T],
+    retries: int = 4,
+    backoff: float = 0.5,
+) -> Optional[T]:
+    """Like `with_retries` but logs and returns None on terminal failure instead of raising.
+
+    Use this for non-critical I/O (e.g. supabase writes that should not break
+    the request if Supabase is briefly unreachable).
+    """
+    try:
+        return await with_retries(label, fn, retries=retries, backoff=backoff)
+    except Exception as exc:
+        logger.error(f"{label} skipped after retries exhausted: {exc}")
+        return None
