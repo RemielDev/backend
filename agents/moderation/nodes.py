@@ -8,6 +8,7 @@ import os
 import logging
 import re
 
+from services.hf_client import hf_session, warn_if_token_missing
 from services.token_tracker import token_tracker
 
 from .state import (
@@ -22,6 +23,7 @@ from .state import (
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 logger = logging.getLogger(__name__)
+warn_if_token_missing(logger)
 
 # ---------- Configuration Constants ----------
 # API Endpoints
@@ -51,7 +53,7 @@ MODERATION_ACTION_PROMPT = (
 async def detect_pii(text: str):
     def sync_query():
         try:
-            response = requests.post(
+            response = hf_session.post(
                 PII_DETECTION_API_URL,
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={"inputs": text},
@@ -72,7 +74,7 @@ async def detect_pii(text: str):
 async def moderate_content(text: str):
     def sync_query():
         try:
-            response = requests.post(
+            response = hf_session.post(
                 CONTENT_MODERATION_API_URL,
                 headers={"Authorization": f"Bearer {HF_TOKEN}"},
                 json={"inputs": text},
